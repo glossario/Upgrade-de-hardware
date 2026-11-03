@@ -198,6 +198,35 @@ class TestOutrasPecas(unittest.TestCase):
             self.assertRegex(texto_rec(NOTEBOOK, peca), "não pode ser trocad|não há fonte")
 
 
+class TestDiagnostico(unittest.TestCase):
+    def test_grava_leitura_e_interpretacao(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        import app
+        with tempfile.TemporaryDirectory() as pasta, \
+                mock.patch.object(app, "ler_hardware_bruto", return_value=NOTEBOOK), \
+                mock.patch.object(app.Path, "cwd", return_value=Path(pasta)):
+            destino = app.gerar_diagnostico()
+            texto = destino.read_text(encoding="utf-8")
+        self.assertEqual(destino.name, "diagnostico.txt")
+        self.assertIn("Latitude 3550", texto)
+        self.assertIn('"tipo": "notebook"', texto)
+
+    def test_falha_na_leitura_fica_registrada(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        import app
+        with tempfile.TemporaryDirectory() as pasta, \
+                mock.patch.object(app, "ler_hardware_bruto", side_effect=RuntimeError("sem WMI")), \
+                mock.patch.object(app.Path, "cwd", return_value=Path(pasta)):
+            texto = app.gerar_diagnostico().read_text(encoding="utf-8")
+        self.assertIn("sem WMI", texto)
+
+
 class TestJanela(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

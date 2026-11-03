@@ -2,7 +2,10 @@
 
 O usuário escolhe só a peça e a finalidade; o hardware é lido automaticamente ao abrir.
 """
+import json
+import platform
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QVBoxLayout, QWidget
@@ -14,7 +17,7 @@ from qfluentwidgets import (
 )
 
 from recomendador import CATALOGO_PADRAO, USOS, carregar_catalogo
-from scanner import FalhaLeitura, escanear
+from scanner import FalhaLeitura, escanear, interpretar, ler_hardware_bruto
 from upgrade import PECAS, recomendar_peca
 
 ICONES_PECAS = {
@@ -252,9 +255,38 @@ class App(FluentWindow):
         self.pagina_pc.definir_hardware(hw)
 
 
+def gerar_diagnostico():
+    """Grava num .txt o que o Windows informou do hardware, para quem está testando mandar de volta."""
+    linhas = [f"Windows: {platform.platform()}", f"Programa: {'executável' if getattr(sys, 'frozen', False) else 'Python'}", ""]
+    try:
+        bruto = ler_hardware_bruto()
+        linhas += ["== Leitura do Windows ==", json.dumps(bruto, ensure_ascii=False, indent=2), "",
+                   "== Interpretação ==", json.dumps(interpretar(bruto), ensure_ascii=False, indent=2)]
+    except Exception as erro:  # o diagnóstico existe justamente para registrar falhas
+        linhas.append(f"Falha na leitura: {erro!r}")
+    texto = "\n".join(linhas)
+
+    pasta = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
+    for destino in (pasta / "diagnostico.txt", Path.home() / "diagnostico.txt"):
+        try:
+            destino.write_text(texto, encoding="utf-8")
+            return destino
+        except OSError:  # pasta sem permissão de escrita: tenta a pasta do usuário
+            continue
+    return None
+
+
 def main():
     app = QApplication(sys.argv)
     setTheme(Theme.AUTO)  # segue o tema claro/escuro do Windows
+    if "--diagnostico" in sys.argv:
+        destino = gerar_diagnostico()
+        mensagem = (f"Diagnóstico salvo em:\n{destino}\n\nEnvie esse arquivo para quem pediu o teste."
+                    if destino else "Não foi possível gravar o arquivo de diagnóstico.")
+        caixa = MessageBox("Diagnóstico", mensagem, None)
+        caixa.cancelButton.hide()
+        caixa.exec()
+        return
     try:
         categorias = carregar_catalogo(CATALOGO_PADRAO)
     except Exception as erro:  # mostra o problema do catálogo em vez de fechar em silêncio

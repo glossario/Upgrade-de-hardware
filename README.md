@@ -6,12 +6,33 @@ tipo de memória, socket e slots são detectados automaticamente.
 
 ## Como rodar
 
+Use um ambiente virtual só para este projeto. O `PyQt-Fluent-Widgets` (versão PyQt5) e o
+`PySide6-Fluent-Widgets` gravam na mesma pasta `qfluentwidgets`: se os dois estiverem no mesmo
+Python, um sobrescreve o outro e a janela trava ao abrir.
+
 ```
+python -m venv %USERPROFILE%\.venvs\upgrade-hardware
+%USERPROFILE%\.venvs\upgrade-hardware\Scripts\activate
 pip install -r requirements.txt
 python app.py
 ```
 
 Requer Windows (a leitura do hardware usa WMI via PowerShell) e Python 3.10+.
+
+## Diagnóstico
+
+`python app.py --diagnostico` (ou `QualPecaComprar.exe --diagnostico`, ou o `Gerar diagnostico.bat`
+da versão compilada) grava em `diagnostico.txt` tudo o que o Windows informou do hardware.
+
+## Gerar o executável
+
+```
+pip install pyinstaller
+pyinstaller app.py --name QualPecaComprar --onedir --windowed --add-data "dados;dados" ^
+  --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module tkinter
+```
+
+O resultado fica em `dist\QualPecaComprar`; compacte essa pasta inteira para enviar.
 
 ## Arquivos
 

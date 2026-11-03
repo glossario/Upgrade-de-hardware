@@ -11,7 +11,8 @@ SCRIPT_POWERSHELL = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $r = [ordered]@{
-  sistema  = Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model, PCSystemType
+  sistema  = Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model, PCSystemType, SystemSKUNumber
+  bios     = Get-CimInstance Win32_BIOS | Select-Object SerialNumber, SMBIOSBIOSVersion
   memorias = @(Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer, PartNumber, Capacity, Speed,
                  ConfiguredClockSpeed, SMBIOSMemoryType, MemoryType, FormFactor, DeviceLocator)
   slots    = @(Get-CimInstance Win32_PhysicalMemoryArray | Where-Object { $_.Use -eq 3 } |
@@ -20,7 +21,7 @@ $r = [ordered]@{
   gpus     = @(Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM)
   discos   = @(Get-PhysicalDisk | Select-Object FriendlyName, @{n='MediaType';e={[string]$_.MediaType}},
                  @{n='BusType';e={[string]$_.BusType}}, Size)
-  placa    = Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product
+  placa    = Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product, Version
   baterias = @(Get-CimInstance Win32_Battery).Count
   gabinete = @((Get-CimInstance Win32_SystemEnclosure).ChassisTypes)
 }
@@ -83,6 +84,16 @@ def _lista(valor):
 
 def _texto(valor):
     return str(valor).strip() if valor not in (None, "") else ""
+
+
+# Valores de preenchimento que alguns fabricantes deixam na BIOS no lugar da informação real
+_SEM_INFORMACAO = re.compile(r"^(to be filled by o\.?e\.?m\.?|default string|system (serial|sku) number|"
+                             r"not (applicable|specified)|none|n/?a|0+|x+)$", re.I)
+
+
+def _identificacao(valor):
+    texto = _texto(valor)
+    return "" if _SEM_INFORMACAO.match(texto) else texto
 
 
 def _int(valor):
@@ -162,6 +173,7 @@ def interpretar(bruto):
     cpus = _lista(bruto.get("cpu"))
     cpu = cpus[0] if cpus else {}
     placa = bruto.get("placa") or {}
+    bios = bruto.get("bios") or {}
 
     return {
         "tipo": tipo,
@@ -169,6 +181,15 @@ def interpretar(bruto):
         "fabricante": _texto(sistema.get("Manufacturer")),
         "modelo": _texto(sistema.get("Model")),
         "placa_mae": " ".join(filter(None, [_texto(placa.get("Manufacturer")), _texto(placa.get("Product"))])),
+        # Identificações usadas para comprar peça de reposição (ex.: placa-mãe de notebook)
+        "identificacao": {
+            "placa_fabricante": _identificacao(placa.get("Manufacturer")),
+            "placa_referencia": _identificacao(placa.get("Product")),
+            "placa_revisao": _identificacao(placa.get("Version")),
+            "numero_serie": _identificacao(bios.get("SerialNumber")),
+            "sku": _identificacao(sistema.get("SystemSKUNumber")),
+            "bios": _identificacao(bios.get("SMBIOSBIOSVersion")),
+        },
         "cpu": {
             "nome": re.sub(r"\s+", " ", _texto(cpu.get("Name"))),
             "socket": _texto(cpu.get("SocketDesignation")),

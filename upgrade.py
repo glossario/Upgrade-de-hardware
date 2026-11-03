@@ -36,8 +36,40 @@ def _secao(titulo):
     return {"titulo": titulo, "instalado": [], "recomendacoes": [], "avisos": []}
 
 
-def _nao_trocavel(s, hw, peca):
-    s["recomendacoes"].append(f"Em {hw['tipo']}, {peca}.")
+_SUFIXOS_EMPRESA = re.compile(r",?\s+(inc\.?|corporation|corp\.?|co\.?,?\s*ltd\.?|ltd\.?|limited|gmbh)$", re.I)
+
+
+def _nome_computador(hw):
+    """'Dell Inc.' + 'Latitude 3550' -> 'Dell Latitude 3550' (sem sufixo de empresa, que atrapalha a busca)."""
+    fabricante = _SUFIXOS_EMPRESA.sub("", hw["fabricante"]).strip()
+    return " ".join(filter(None, [fabricante, hw["modelo"]])) or "o mesmo modelo"
+
+
+# Linhas de processador em ordem crescente, por fabricante
+_LINHAS_CPU = [
+    (re.compile(r"core\s*ultra\s*([3579])\b", re.I), "Core Ultra {}", ["3", "5", "7", "9"]),
+    (re.compile(r"core\s*i([3579])\b|\bi([3579])-\d", re.I), "Core i{}", ["3", "5", "7", "9"]),
+    (re.compile(r"ryzen\s*([3579])\b", re.I), "Ryzen {}", ["3", "5", "7", "9"]),
+]
+
+
+def _linhas_superiores(nome_cpu):
+    """'13th Gen Intel(R) Core(TM) i5-1345U' -> ('Core i5', ['Core i7', 'Core i9'])."""
+    nome = re.sub(r"\((r|tm)\)", "", nome_cpu, flags=re.I)
+    for padrao, formato, ordem in _LINHAS_CPU:
+        achado = padrao.search(nome)
+        if achado:
+            atual = next(g for g in achado.groups() if g)
+            return formato.format(atual), [formato.format(n) for n in ordem[ordem.index(atual) + 1:]]
+    return None, []
+
+
+def _para_placa_mae(s, hw, situacao, objetivo):
+    """Notebook/all-in-one: a peça vem soldada, então o upgrade é pela troca da placa-mãe."""
+    s["recomendacoes"].append(
+        f"Em {hw['tipo']}, {situacao} na placa-mãe. Para ter {objetivo}, troca-se a placa-mãe inteira por uma "
+        f"versão do mesmo modelo ({_nome_computador(hw)}). Escolha \"Placa-mãe\" para ver as referências "
+        "necessárias para a compra.")
     return s
 
 
@@ -239,7 +271,7 @@ def sugerir_processador(hw, categorias, uso):
         f"{cpu['nome'] or 'desconhecido'}"
         + (f" | {cpu['nucleos']} núcleos / {cpu['threads']} threads" if cpu["nucleos"] else ""))
     if hw["tipo"] in TIPOS_INTEGRADOS:
-        return _nao_trocavel(s, hw, "o processador é soldado na placa e não pode ser trocado")
+        return _para_placa_mae(s, hw, "o processador vem soldado", "um processador melhor")
 
     socket = cpu["socket"].upper() if cpu["socket"].upper() in SOCKETS else None
     if not socket:
@@ -267,7 +299,7 @@ def sugerir_video(hw, categorias, uso):
     if not gpus:
         s["instalado"].append("Nenhuma identificada")
     if hw["tipo"] in TIPOS_INTEGRADOS:
-        return _nao_trocavel(s, hw, "a placa de vídeo é soldada na placa-mãe e não pode ser trocada")
+        return _para_placa_mae(s, hw, "o vídeo vem integrado", "um vídeo melhor (ou dedicado)")
     if uso == "escritorio" and gpus:
         s["recomendacoes"].append("Para escritório, o vídeo atual é suficiente. Não precisa comprar placa de vídeo.")
         return s
@@ -285,11 +317,81 @@ def sugerir_video(hw, categorias, uso):
     return s
 
 
+def _placa_mae_integrada(hw, uso):
+    """Notebook/all-in-one: a placa só serve se for do mesmo modelo; o que importa é a referência para comprar."""
+    s = _secao("Placa-mãe")
+    ident = hw.get("identificacao", {})
+    nome_pc = _nome_computador(hw)
+    eh_dell = "dell" in hw["fabricante"].lower()
+
+    s["instalado"].append(f"Modelo do {hw['tipo']}: {nome_pc}")
+    if ident.get("placa_referencia"):
+        ref = f"Referência da placa-mãe (part number): {ident['placa_referencia']}"
+        if ident.get("placa_revisao"):
+            ref += f" (revisão {ident['placa_revisao']})"
+        s["instalado"].append(ref)
+    else:
+        s["instalado"].append("Referência da placa-mãe: não informada pelo Windows (veja a etiqueta na própria placa)")
+    if hw["cpu"]["nome"]:
+        s["instalado"].append(f"Processador atual (soldado na placa): {hw['cpu']['nome']}")
+    tipo_mem = tipo_memoria_unico(hw)
+    formatos = {m["formato"] for m in hw["memoria"]["modulos"] if m["formato"]}
+    if tipo_mem:
+        s["instalado"].append(f"Memória usada pela placa: {tipo_mem} {' / '.join(sorted(formatos))}".rstrip())
+    if ident.get("numero_serie"):
+        s["instalado"].append(f"Número de série{' (Service Tag)' if eh_dell else ''}: {ident['numero_serie']}")
+    extras = [f"SKU: {ident['sku']}" if ident.get("sku") else "", f"BIOS: {ident['bios']}" if ident.get("bios") else ""]
+    if any(extras):
+        s["instalado"].append(" | ".join(filter(None, extras)))
+
+    linha_atual, superiores = _linhas_superiores(hw["cpu"]["nome"])
+    if uso == "escritorio" and linha_atual and linha_atual[-1] in "579":
+        s["recomendacoes"].append(
+            f"Para escritório, o {linha_atual} atual normalmente basta. Só vale trocar a placa se houver lentidão.")
+    if superiores:
+        s["recomendacoes"].append(
+            f"Para um processador melhor, procure a placa-mãe do {nome_pc} na versão com {superiores[0]} "
+            f"(a sua é {linha_atual}).")
+        s["recomendacoes"].append(f"Termo de busca: \"placa mãe {nome_pc} {superiores[0]}\".")
+    elif linha_atual:
+        s["recomendacoes"].append(
+            f"O seu processador ({linha_atual}) já é da linha mais alta. Trocar a placa só compensa se o "
+            f"{nome_pc} tiver versão de geração mais nova.")
+    else:
+        s["recomendacoes"].append(
+            f"Procure a placa-mãe do {nome_pc} na versão com o processador desejado.")
+    if uso in ("jogos", "edicao"):
+        s["recomendacoes"].append(
+            "Se este modelo teve versão com placa de vídeo dedicada, prefira essa placa: para jogos e edição, o "
+            "vídeo dedicado faz mais diferença que o processador. Ela pode exigir outro dissipador (cooler).")
+    if ident.get("placa_referencia"):
+        s["recomendacoes"].append(
+            f"Ao comprar, informe ao vendedor o modelo ({nome_pc}) e a referência atual "
+            f"({ident['placa_referencia']}). A placa nova terá outra referência, e o vendedor precisa confirmar "
+            "que ela é compatível com este modelo.")
+
+    s["avisos"].append(
+        f"A placa nova precisa ser do mesmo modelo de {hw['tipo']} ({nome_pc}): o encaixe no gabinete, os "
+        "conectores de tela, teclado e bateria e a BIOS são específicos de cada modelo.")
+    if tipo_mem:
+        s["avisos"].append(
+            f"Confirme que a placa nova usa a mesma memória ({tipo_mem} {' / '.join(sorted(formatos))}) para "
+            "reaproveitar seus pentes. Algumas versões vêm com a memória soldada.")
+    if ident.get("numero_serie"):
+        s["avisos"].append(
+            f"O suporte do fabricante consegue informar as placas compatíveis pelo número de série "
+            f"({ident['numero_serie']}).")
+    s["avisos"].append(
+        "A troca de placa-mãe de notebook exige desmontar o aparelho inteiro. Se não tiver experiência, "
+        "procure uma assistência técnica.")
+    return s
+
+
 def sugerir_placa_mae(hw, categorias, uso):
+    if hw["tipo"] in TIPOS_INTEGRADOS:
+        return _placa_mae_integrada(hw, uso)
     s = _secao("Placa-mãe")
     s["instalado"].append(hw["placa_mae"] or "desconhecida")
-    if hw["tipo"] in TIPOS_INTEGRADOS:
-        return _nao_trocavel(s, hw, "a placa-mãe é específica do modelo e não pode ser trocada por outra")
     socket = hw["cpu"]["socket"].upper()
     memoria = tipo_memoria_unico(hw)
     if socket not in SOCKETS:

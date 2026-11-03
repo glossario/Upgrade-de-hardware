@@ -76,7 +76,10 @@ class Cartao(SimpleCardWidget):
                 linha.addWidget(marcador, 0, Qt.AlignTop)
             else:
                 linha.addSpacing(4)
-            linha.addWidget(rotulo(texto), 1)
+            texto_linha = rotulo(texto)
+            # Selecionável para copiar referências e termos de busca
+            texto_linha.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            linha.addWidget(texto_linha, 1)
             layout.addLayout(linha)
 
 

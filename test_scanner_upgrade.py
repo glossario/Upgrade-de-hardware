@@ -16,7 +16,8 @@ CAT = carregar_catalogo()
 
 # Leitura real do Dell Latitude 3550 (1x16 GB DDR5 SO-DIMM, 2 slots)
 NOTEBOOK = {
-    "sistema": {"Manufacturer": "Dell Inc.", "Model": "Latitude 3550", "PCSystemType": 2},
+    "sistema": {"Manufacturer": "Dell Inc.", "Model": "Latitude 3550", "PCSystemType": 2, "SystemSKUNumber": "0C98"},
+    "bios": {"SerialNumber": "9LPDVB4", "SMBIOSBIOSVersion": "1.22.1"},
     "memorias": [{"Manufacturer": "04CB000080AD", "PartNumber": "AL1V56WCSV1-B1ES   ", "Capacity": 16 * GIB,
                   "Speed": 5600, "ConfiguredClockSpeed": 5200, "SMBIOSMemoryType": 34, "MemoryType": 0,
                   "FormFactor": 12, "DeviceLocator": "DIMM 1"}],
@@ -25,7 +26,7 @@ NOTEBOOK = {
              "NumberOfCores": 10, "NumberOfLogicalProcessors": 12}],
     "gpus": [{"Name": "Intel(R) UHD Graphics", "AdapterRAM": 2147479552}],
     "discos": [{"FriendlyName": "BG6 KIOXIA 256GB", "MediaType": "SSD", "BusType": "NVMe", "Size": 256060514304}],
-    "placa": {"Manufacturer": "Dell Inc.", "Product": "064F52"},
+    "placa": {"Manufacturer": "Dell Inc.", "Product": "064F52", "Version": "A00"},
     "baterias": 1,
     "gabinete": [10],
 }
@@ -116,7 +117,7 @@ class TestTipoComputador(unittest.TestCase):
     def test_all_in_one_nao_sugere_trocar_cpu(self):
         bruto = copy.deepcopy(DESKTOP)
         bruto["gabinete"] = [13]
-        self.assertIn("não pode ser trocado", texto_rec(bruto, "processador"))
+        self.assertIn("troca-se a placa-mãe inteira", texto_rec(bruto, "processador"))
 
 
 class TestMemoria(unittest.TestCase):
@@ -193,9 +194,59 @@ class TestOutrasPecas(unittest.TestCase):
     def test_desktop_fonte_respeita_gpu_atual(self):
         self.assertIn("pede no mínimo 550 W", texto_rec(DESKTOP, "fonte"))
 
-    def test_notebook_nao_sugere_cpu_gpu_placa_fonte(self):
-        for peca in ("processador", "video", "placa_mae", "fonte"):
-            self.assertRegex(texto_rec(NOTEBOOK, peca), "não pode ser trocad|não há fonte")
+    def test_notebook_cpu_e_video_apontam_para_placa_mae(self):
+        for peca in ("processador", "video"):
+            texto = texto_rec(NOTEBOOK, peca)
+            self.assertIn("troca-se a placa-mãe inteira", texto)
+            self.assertIn("Dell Latitude 3550", texto)
+        self.assertIn("não há fonte", texto_rec(NOTEBOOK, "fonte"))
+
+
+class TestPlacaMaeNotebook(unittest.TestCase):
+    def test_mostra_referencias_para_compra(self):
+        instalado = " ".join(rec(NOTEBOOK, "placa_mae")["instalado"])
+        self.assertIn("part number): 064F52 (revisão A00)", instalado)
+        self.assertIn("Service Tag): 9LPDVB4", instalado)
+        self.assertIn("SKU: 0C98 | BIOS: 1.22.1", instalado)
+        self.assertIn("DDR5 SO-DIMM", instalado)
+        self.assertIn("i5-1345U", instalado)
+
+    def test_sugere_linha_acima_e_termo_de_busca(self):
+        texto = texto_rec(NOTEBOOK, "placa_mae", "jogos")
+        self.assertIn("versão com Core i7 (a sua é Core i5)", texto)
+        self.assertIn('"placa mãe Dell Latitude 3550 Core i7"', texto)
+        self.assertNotIn("Inc.", texto)
+        self.assertIn("vídeo dedicada", texto)
+
+    def test_escritorio_avisa_que_i5_basta(self):
+        self.assertIn("Core i5 atual normalmente basta", texto_rec(NOTEBOOK, "placa_mae", "escritorio"))
+
+    def test_avisos_de_compatibilidade(self):
+        avisos = " ".join(rec(NOTEBOOK, "placa_mae")["avisos"])
+        self.assertIn("mesmo modelo de notebook", avisos)
+        self.assertIn("mesma memória (DDR5 SO-DIMM)", avisos)
+        self.assertIn("número de série (9LPDVB4)", avisos)
+
+    def test_linha_mais_alta(self):
+        bruto = copy.deepcopy(NOTEBOOK)
+        bruto["cpu"][0]["Name"] = "AMD Ryzen 9 7940HS w/ Radeon 780M Graphics"
+        self.assertIn("já é da linha mais alta", texto_rec(bruto, "placa_mae"))
+
+    def test_core_ultra(self):
+        bruto = copy.deepcopy(NOTEBOOK)
+        bruto["cpu"][0]["Name"] = "Intel(R) Core(TM) Ultra 5 125U"
+        self.assertIn("versão com Core Ultra 7 (a sua é Core Ultra 5)", texto_rec(bruto, "placa_mae"))
+
+    def test_identificacao_de_preenchimento_e_ignorada(self):
+        bruto = copy.deepcopy(NOTEBOOK)
+        bruto["placa"] = {"Manufacturer": "OEM", "Product": "To be filled by O.E.M.", "Version": "Default string"}
+        bruto["bios"] = {"SerialNumber": "System Serial Number"}
+        hw = interpretar(bruto)
+        self.assertEqual(hw["identificacao"]["placa_referencia"], "")
+        self.assertEqual(hw["identificacao"]["numero_serie"], "")
+        instalado = " ".join(recomendar_peca(hw, CAT, "placa_mae", "jogos")["instalado"])
+        self.assertIn("não informada pelo Windows", instalado)
+        self.assertNotIn("Service Tag", instalado)
 
 
 class TestDiagnostico(unittest.TestCase):
@@ -259,7 +310,7 @@ class TestJanela(unittest.TestCase):
             from PySide6.QtCore import QCoreApplication, QEvent
             QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
             texto = self.textos(pagina)
-            self.assertIn("não pode ser trocado", texto)
+            self.assertIn("troca-se a placa-mãe inteira", texto)
             self.assertNotIn("SO-DIMM 5600 MHz, igual", texto)
 
             self.assertIn("BG6 KIOXIA", self.textos(app.pagina_pc))

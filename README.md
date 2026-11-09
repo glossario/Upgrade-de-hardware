@@ -28,7 +28,8 @@ da versão compilada) grava em `diagnostico.txt` tudo o que o Windows informou d
 
 ```
 pip install pyinstaller
-pyinstaller app.py --name QualPecaComprar --onedir --windowed --add-data "dados;dados" ^
+pyinstaller app.py --name QualPecaComprar --onedir --windowed --icon assets\blasync.ico ^
+  --add-data "dados;dados" --add-data "assets;assets" ^
   --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module tkinter
 ```
 
@@ -43,6 +44,7 @@ O resultado fica em `dist\QualPecaComprar`; compacte essa pasta inteira para env
 | `upgrade.py` | Transforma o hardware detectado em recomendações |
 | `recomendador.py` | Filtra e ordena os modelos do catálogo |
 | `dados/catalogo.json` | Catálogo de modelos (editável) |
+| `assets/` | Identidade visual Blasync Technology: banner, símbolo e ícone |
 
 ## Testes
 

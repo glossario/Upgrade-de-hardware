@@ -317,6 +317,26 @@ class TestJanela(unittest.TestCase):
         finally:
             app.close()
 
+    def test_identidade_visual_blasync(self):
+        import app as modulo
+        from app import FaixaMarca
+        from qfluentwidgets import isDarkTheme, qconfig
+        for arquivo in ("faixa_blasync.jpg", "simbolo_blasync.png", "blasync.ico"):
+            self.assertTrue((modulo.ASSETS / arquivo).is_file(), arquivo)
+        janela = App(CAT, escanear_ao_abrir=False)
+        try:
+            self.assertIn("Blasync Technology", janela.windowTitle())
+            self.assertFalse(janela.windowIcon().isNull())
+            self.assertTrue(isDarkTheme())
+            # A cor configurada; no tema escuro a biblioteca a exibe um pouco mais clara para contraste
+            self.assertEqual(qconfig.get(qconfig.themeColor).name().upper(), modulo.COR_ROXO)
+            faixas = janela.pagina_recomendar.findChildren(FaixaMarca)
+            self.assertEqual(len(faixas), 1)
+            self.assertFalse(faixas[0].imagem.isNull())
+            self.assertIn("impulsionando o amanhã", self.textos(janela.pagina_pc))
+        finally:
+            janela.close()
+
 
 if __name__ == "__main__":
     unittest.main()

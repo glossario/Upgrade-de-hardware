@@ -8,17 +8,30 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel, CaptionLabel, ComboBox, FluentIcon, FluentWindow, IconWidget,
     IndeterminateProgressRing, InfoBar, InfoBarIcon, InfoBarPosition, MessageBox,
     PrimaryPushButton, SimpleCardWidget, SmoothScrollArea, StrongBodyLabel,
-    Theme, TitleLabel, setTheme,
+    Theme, TitleLabel, setCustomStyleSheet, setTheme, setThemeColor,
 )
 
 from recomendador import CATALOGO_PADRAO, USOS, carregar_catalogo
 from scanner import FalhaLeitura, escanear, interpretar, ler_hardware_bruto
 from upgrade import PECAS, recomendar_peca
+
+# Identidade visual Blasync Technology (cores medidas no banner e no logo oficiais)
+COR_FUNDO = "#07001F"      # azul-marinho quase preto
+COR_CARTAO = "#120A2E"
+COR_BORDA = "#2B1766"
+COR_ROXO = "#8000F8"       # roxo neon: cor principal (botões, seleção)
+COR_DOURADO = "#FBDD00"    # dourado do triângulo do logo: destaques
+COR_AVISO = "#2A2108"      # fundo dos avisos, dourado escurecido
+NOME_MARCA = "Blasync Technology"
+SLOGAN = ("Conectando tecnologias, ", "impulsionando o amanhã")
+
+ASSETS = Path(__file__).parent / "assets"
 
 ICONES_PECAS = {
     "memoria": FluentIcon.IOT,
@@ -50,7 +63,66 @@ def rotulo(texto, classe=BodyLabel):
     return label
 
 
-class Cartao(SimpleCardWidget):
+def icone_dourado(icone):
+    return icone.colored(QColor(COR_DOURADO), QColor(COR_DOURADO))
+
+
+class CartaoMarca(SimpleCardWidget):
+    """Cartão no padrão Blasync: fundo marinho e borda roxa discreta."""
+
+    def _normalBackgroundColor(self):
+        return QColor(COR_CARTAO)
+
+    def paintEvent(self, e):
+        pintor = QPainter(self)
+        pintor.setRenderHints(QPainter.Antialiasing)
+        pintor.setBrush(self.backgroundColor)
+        pintor.setPen(QColor(COR_BORDA))
+        r = self.borderRadius
+        pintor.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), r, r)
+
+
+class FaixaMarca(QWidget):
+    """Banner da Blasync no topo, acompanhando a largura da janela."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.imagem = QPixmap(str(ASSETS / "faixa_blasync.jpg"))
+        self.proporcao = self.imagem.height() / self.imagem.width() if not self.imagem.isNull() else 0
+        self.setFixedHeight(140)
+        if self.imagem.isNull():
+            self.hide()  # sem o arquivo da marca, a janela segue funcionando sem a faixa
+
+    def resizeEvent(self, e):
+        self.setFixedHeight(max(110, min(200, int(self.width() * self.proporcao))))
+        super().resizeEvent(e)
+
+    def paintEvent(self, e):
+        pintor = QPainter(self)
+        pintor.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        contorno = QPainterPath()
+        contorno.addRoundedRect(self.rect(), 10, 10)
+        pintor.setClipPath(contorno)
+        # Preenche a largura e corta o excesso de altura pelo centro (modo "cover")
+        escalada = self.imagem.scaled(self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        x = (escalada.width() - self.width()) // 2
+        y = (escalada.height() - self.height()) // 2
+        pintor.drawPixmap(0, 0, escalada, x, y, self.width(), self.height())
+
+
+def rodape_marca(com_slogan=True):
+    texto = f"<span style='color:#B9B3D6'>{NOME_MARCA}</span>"
+    if com_slogan:  # a página com o banner já mostra o slogan
+        texto = (f"<span style='color:#B9B3D6'>{SLOGAN[0]}</span>"
+                 f"<span style='color:{COR_DOURADO}'>{SLOGAN[1]}</span>"
+                 f"<span style='color:#B9B3D6'> · {NOME_MARCA}</span>")
+    label = CaptionLabel(texto)
+    label.setTextFormat(Qt.RichText)
+    label.setAlignment(Qt.AlignCenter)
+    return label
+
+
+class Cartao(CartaoMarca):
     """Cartão com ícone + título e uma linha por item."""
 
     def __init__(self, icone, titulo, linhas, icone_linha=None, parent=None):
@@ -86,7 +158,7 @@ class Cartao(SimpleCardWidget):
 class Pagina(SmoothScrollArea):
     """Página rolável com título; o conteúdo vai em `self.corpo`."""
 
-    def __init__(self, nome_objeto, titulo, parent=None):
+    def __init__(self, nome_objeto, titulo, parent=None, com_faixa=False):
         super().__init__(parent)
         self.setObjectName(nome_objeto)  # o FluentWindow exige objectName nas páginas
         self.setWidgetResizable(True)
@@ -96,10 +168,19 @@ class Pagina(SmoothScrollArea):
         conteudo = QWidget()
         conteudo.setStyleSheet("background: transparent;")
         self.corpo = QVBoxLayout(conteudo)
-        self.corpo.setContentsMargins(36, 28, 36, 28)
+        self.corpo.setContentsMargins(36, 28, 36, 20)
         self.corpo.setSpacing(14)
+        self.com_faixa = com_faixa
+        if com_faixa:
+            self.corpo.addWidget(FaixaMarca())
         self.corpo.addWidget(rotulo(titulo, TitleLabel))
         self.setWidget(conteudo)
+
+    def finalizar(self):
+        """Empurra o conteúdo para o topo e fecha a página com o slogan da marca."""
+        self.corpo.addStretch(1)
+        self.corpo.addSpacing(12)
+        self.corpo.addWidget(rodape_marca(com_slogan=not self.com_faixa))
 
 
 class LeitorHardware(QThread):
@@ -117,18 +198,18 @@ class LeitorHardware(QThread):
 
 class PaginaRecomendar(Pagina):
     def __init__(self, categorias, parent=None):
-        super().__init__("paginaRecomendar", "Qual peça comprar?", parent)
+        super().__init__("paginaRecomendar", "Qual peça comprar?", parent, com_faixa=True)
         self.categorias = categorias
         self.hw = None
 
         # Cartão do computador detectado
-        cartao_pc = SimpleCardWidget()
+        cartao_pc = CartaoMarca()
         linha_pc = QHBoxLayout(cartao_pc)
         linha_pc.setContentsMargins(20, 16, 20, 16)
         linha_pc.setSpacing(14)
         self.anel = IndeterminateProgressRing()
         self.anel.setFixedSize(28, 28)
-        self.icone_pc = IconWidget(FluentIcon.IOT)
+        self.icone_pc = IconWidget(icone_dourado(FluentIcon.IOT))
         self.icone_pc.setFixedSize(28, 28)
         self.icone_pc.hide()
         linha_pc.addWidget(self.anel)
@@ -143,7 +224,7 @@ class PaginaRecomendar(Pagina):
         self.corpo.addWidget(cartao_pc)
 
         # Cartão de escolha: peça + finalidade
-        cartao_escolha = SimpleCardWidget()
+        cartao_escolha = CartaoMarca()
         grade = QHBoxLayout(cartao_escolha)
         grade.setContentsMargins(20, 16, 20, 16)
         grade.setSpacing(16)
@@ -162,7 +243,11 @@ class PaginaRecomendar(Pagina):
             coluna.addWidget(combo)
             grade.addLayout(coluna)
 
-        self.botao = PrimaryPushButton(FluentIcon.SEARCH, "Recomendar")
+        branco = QColor("#FFFFFF")
+        self.botao = PrimaryPushButton(FluentIcon.SEARCH.colored(branco, branco), "Recomendar")
+        # No tema escuro a biblioteca usa texto preto no botão principal; no roxo da marca, branco lê melhor
+        qss_botao = "PrimaryPushButton { color: #FFFFFF; } PrimaryPushButton:disabled { color: rgba(255,255,255,0.45); }"
+        setCustomStyleSheet(self.botao, qss_botao, qss_botao)
         self.botao.setEnabled(False)
         self.botao.clicked.connect(self.recomendar)
         grade.addStretch()
@@ -173,7 +258,7 @@ class PaginaRecomendar(Pagina):
         self.resultado = QVBoxLayout()
         self.resultado.setSpacing(14)
         self.corpo.addLayout(self.resultado)
-        self.corpo.addStretch(1)  # mantém o conteúdo no topo quando sobra espaço
+        self.finalizar()
         self.resultado.addWidget(rotulo("Escolha a peça e a finalidade e clique em Recomendar.", CaptionLabel))
 
     def definir_hardware(self, hw):
@@ -186,7 +271,7 @@ class PaginaRecomendar(Pagina):
 
     def mostrar_erro(self, erro):
         self.anel.hide()
-        self.icone_pc.setIcon(FluentIcon.INFO)
+        self.icone_pc.setIcon(icone_dourado(FluentIcon.INFO))
         self.icone_pc.show()
         self.lbl_pc.setText("Não foi possível ler as peças deste computador.")
         self.lbl_origem.setText(erro)
@@ -200,14 +285,17 @@ class PaginaRecomendar(Pagina):
 
         limpar_layout(self.resultado)
         if secao["instalado"]:
-            self.resultado.addWidget(Cartao(ICONES_PECAS[peca], "O que você tem hoje", secao["instalado"]))
+            self.resultado.addWidget(Cartao(icone_dourado(ICONES_PECAS[peca]), "O que você tem hoje",
+                                            secao["instalado"]))
         if secao["recomendacoes"]:
-            self.resultado.addWidget(Cartao(FluentIcon.ACCEPT, "Recomendação", secao["recomendacoes"],
-                                            icone_linha=FluentIcon.CHEVRON_RIGHT))
+            self.resultado.addWidget(Cartao(icone_dourado(FluentIcon.ACCEPT), "Recomendação",
+                                            secao["recomendacoes"],
+                                            icone_linha=icone_dourado(FluentIcon.CHEVRON_RIGHT)))
         for aviso in secao["avisos"]:
-            self.resultado.addWidget(InfoBar(
-                InfoBarIcon.WARNING, "Atenção", aviso, orient=Qt.Vertical, isClosable=False,
-                duration=-1, position=InfoBarPosition.NONE))
+            barra = InfoBar(InfoBarIcon.WARNING, "Atenção", aviso, orient=Qt.Vertical, isClosable=False,
+                            duration=-1, position=InfoBarPosition.NONE)
+            barra.setCustomBackgroundColor(COR_AVISO, COR_AVISO)
+            self.resultado.addWidget(barra)
 
 
 class PaginaMeuComputador(Pagina):
@@ -217,7 +305,7 @@ class PaginaMeuComputador(Pagina):
         self.lista = QVBoxLayout()
         self.lista.setSpacing(14)
         self.corpo.addLayout(self.lista)
-        self.corpo.addStretch(1)  # mantém o conteúdo no topo quando sobra espaço
+        self.finalizar()
         self.lista.addWidget(rotulo("Lendo as peças deste computador...", CaptionLabel))
 
     def definir_hardware(self, hw):
@@ -227,14 +315,25 @@ class PaginaMeuComputador(Pagina):
         for chave, (nome, _) in PECAS.items():
             instalado = recomendar_peca(hw, self.categorias, chave, "escritorio")["instalado"]
             if instalado:
-                self.lista.addWidget(Cartao(ICONES_PECAS[chave], nome, instalado))
+                self.lista.addWidget(Cartao(icone_dourado(ICONES_PECAS[chave]), nome, instalado))
+
+
+def aplicar_tema_marca():
+    # A Blasync é uma marca escura: o tema fica escuro mesmo com o Windows no claro.
+    setTheme(Theme.DARK)
+    setThemeColor(COR_ROXO)
 
 
 class App(FluentWindow):
     def __init__(self, categorias, escanear_ao_abrir=True):
+        aplicar_tema_marca()
         super().__init__()
-        self.setWindowTitle("Qual peça comprar?")
-        self.resize(980, 720)
+        self.setWindowTitle(f"Qual peça comprar? · {NOME_MARCA}")
+        self.setWindowIcon(QIcon(str(ASSETS / "blasync.ico")))
+        # Fundo da marca no lugar do Mica (o translúcido do Windows 11 mudaria a cor)
+        self.setMicaEffectEnabled(False)
+        self.setCustomBackgroundColor(QColor(COR_FUNDO), QColor(COR_FUNDO))
+        self.resize(1000, 760)
         self.setMinimumSize(720, 520)
 
         self.pagina_recomendar = PaginaRecomendar(categorias, self)
@@ -281,7 +380,8 @@ def gerar_diagnostico():
 
 def main():
     app = QApplication(sys.argv)
-    setTheme(Theme.AUTO)  # segue o tema claro/escuro do Windows
+    app.setWindowIcon(QIcon(str(ASSETS / "blasync.ico")))
+    aplicar_tema_marca()
     if "--diagnostico" in sys.argv:
         destino = gerar_diagnostico()
         mensagem = (f"Diagnóstico salvo em:\n{destino}\n\nEnvie esse arquivo para quem pediu o teste."
